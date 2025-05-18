@@ -1,0 +1,20 @@
+version: '3.8' # Specifies the Docker Compose file format version
+
+services:
+  scylladb:
+    image: scylladb/scylla:latest # Uses the latest official ScyllaDB image
+    container_name: scylla-dev # A friendly name for your container
+    ports:
+      - "9042:9042" # Maps port 9042 on your host to port 9042 in the container (ScyllaDB's default CQL port)
+    # Optional: Add command arguments for development to limit resources.
+    # This is useful to prevent ScyllaDB from consuming too many resources on your dev machine.
+    # Adjust --smp and --memory based on your machine's capabilities.
+    command: "--smp 1 --memory 1G --developer-mode 1"
+    # Optional: Persist data across container restarts.
+    # Create a 'scylla_data' volume or map to a local directory.
+    # volumes:
+    #   - scylla_data:/var/lib/scylla
+
+# Optional: Define a named volume for data persistence
+# volumes:
+#   scylla_data:
