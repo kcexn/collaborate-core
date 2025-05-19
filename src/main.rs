@@ -11,21 +11,19 @@
 // GNU General Public License for more details.
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
-use scylla::client::session::Session;
-use scylla::client::session_builder::SessionBuilder;
 use anyhow::Result;
+
+mod scylla_connector;
+use scylla_connector::ScyllaManager;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     println!("Attempting to connect to ScyllaDB...");
-    let uri = "127.0.0.1:9042";
-    let session: Session = SessionBuilder::new()
-        .known_node(uri)
-        .use_keyspace("collaborate_core", true)
-        .build()
-        .await?;
-    println!("Successfully connected to ScyllaDB at {}!", uri);
-    let (version,): (String,) = session
+    let _manager = ScyllaManager::new(
+        &["127.0.0.1:9042"],
+        "collaborate_core"
+    ).await?;
+    let (version,) = _manager.session
         .query_unpaged("SELECT release_version FROM system.local", &[])
         .await?
         .into_rows_result()?

@@ -12,7 +12,6 @@ chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1.0"
 tracing = "0.1" # Optional, for logging
 
-
 [[bin]]
 name = "main"
 path = "src/main.rs"
