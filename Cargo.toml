@@ -15,4 +15,4 @@ tracing = "0.1" # Optional, for logging
 
 [[bin]]
 name = "main"
-path = "main.rs"
+path = "src/main.rs"
