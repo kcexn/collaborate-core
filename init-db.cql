@@ -2,11 +2,11 @@
 
 -- Create a keyspace if it doesn't already exist.
 -- For development, SimpleStrategy is often used. For production, you'd use NetworkTopologyStrategy.
-CREATE KEYSPACE IF NOT EXISTS dev_keyspace
+CREATE KEYSPACE IF NOT EXISTS collaborate_core
 WITH REPLICATION = { 'class' : 'SimpleStrategy', 'replication_factor' : 1 };
 
 -- Use the new keyspace
-USE dev_keyspace;
+USE collaborate_core;
 
 -- Create a users table if it doesn't already exist
 CREATE TABLE IF NOT EXISTS users (
