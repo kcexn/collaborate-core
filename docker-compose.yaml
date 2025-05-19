@@ -1,20 +1,26 @@
-version: '3.8' # Specifies the Docker Compose file format version
-
 services:
   scylladb:
-    image: scylladb/scylla:latest # Uses the latest official ScyllaDB image
-    container_name: scylla-dev # A friendly name for your container
+    image: scylladb/scylla:latest
+    container_name: scylla-dev # As per your original request
     ports:
-      - "9042:9042" # Maps port 9042 on your host to port 9042 in the container (ScyllaDB's default CQL port)
-    # Optional: Add command arguments for development to limit resources.
-    # This is useful to prevent ScyllaDB from consuming too many resources on your dev machine.
-    # Adjust --smp and --memory based on your machine's capabilities.
+      - "9042:9042" # Maps port 9042 on your host to port 9042 in the container
     command: "--smp 1 --memory 1G --developer-mode 1"
-    # Optional: Persist data across container restarts.
-    # Create a 'scylla_data' volume or map to a local directory.
-    # volumes:
-    #   - scylla_data:/var/lib/scylla
+    healthcheck:
+      test: ["CMD", "cqlsh", "-e", "describe keyspaces"]
+      interval: 10s   # How often to run the check
+      timeout: 10s    # How long to wait for the check to return
+      retries: 10     # How many times to retry before marking as unhealthy
+      start_period: 30s # Grace period for startup before failures count
 
-# Optional: Define a named volume for data persistence
-# volumes:
-#   scylla_data:
+  scylla-init:
+    image: scylladb/scylla:latest # Use the same ScyllaDB image as it contains cqlsh
+    container_name: scylla-init # Friendly name for the init container
+    depends_on:
+      scylladb:
+        condition: service_healthy # Crucial: waits for scylladb to be healthy
+    volumes:
+      - ./init-db.cql:/init-db.cql # Mount the CQL script into the container
+    entrypoint: /bin/sh
+    command: -c "
+          cqlsh scylladb -f /init-db.cql
+      "

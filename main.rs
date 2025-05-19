@@ -25,6 +25,7 @@ async fn main() -> Result<()> {
 
     let session: Session = SessionBuilder::new()
         .known_node(uri)
+        .use_keyspace("collaborate_core", true)
         .build()
         .await?;
 
