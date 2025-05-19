@@ -4,9 +4,14 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-scylla = "0.12" # Check for the latest version on crates.io
-tokio = { version = "1", features = ["full"] }
-anyhow = "1.0" # For easier error handling
+scylla = "1.1.0" # Or the latest version
+uuid = { version = "1.16", features = ["v4", "serde"] }
+tokio = { version = "1.45", features = ["macros", "rt-multi-thread"] }
+thiserror = "2.0.12"
+chrono = { version = "0.4", features = ["serde"] }
+anyhow = "1.0"
+tracing = "0.1" # Optional, for logging
+
 
 [[bin]]
 name = "main"

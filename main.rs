@@ -9,37 +9,27 @@
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
-//
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
-use scylla::{Session, SessionBuilder};
-use anyhow::Result; // Using anyhow for convenient error handling
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
+use anyhow::Result;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     println!("Attempting to connect to ScyllaDB...");
-
-    // The URI for your ScyllaDB instance.
-    // "127.0.0.1:9042" is the default if Docker is running locally and port is mapped.
     let uri = "127.0.0.1:9042";
-
     let session: Session = SessionBuilder::new()
         .known_node(uri)
         .use_keyspace("collaborate_core", true)
         .build()
         .await?;
-
     println!("Successfully connected to ScyllaDB at {}!", uri);
-
-    // Let's perform a simple query to verify the connection
-    // and get the ScyllaDB version.
-    let query_result = session.query("SELECT release_version FROM system.local", &[]).await?;
-
-    if let Some(rows) = query_result.rows {
-        for row in rows {
-            let version: String = row.into_typed::<(String,)>()?.0;
-            println!("ScyllaDB release_version: {}", version);
-        }
-    }
+    let (version,): (String,) = session
+        .query_unpaged("SELECT release_version FROM system.local", &[])
+        .await?
+        .into_rows_result()?
+        .first_row::<(String,)>()?;
+    println!("ScyllaDB release_version: {}", version);
     Ok(())
 }
