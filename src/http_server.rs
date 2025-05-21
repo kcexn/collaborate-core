@@ -23,13 +23,18 @@ use axum::{
 use tokio::net::TcpListener; // Import TcpListener
 use std::net::SocketAddr;
 use std::sync::Arc;
+use crate::document_service::DocumentService; // Import DocumentService
 
 // Shared application state (if needed, e.g., for broadcasting messages)
 #[derive(Clone)]
-struct AppState {}
+struct AppState {
+    doc_service: Arc<DocumentService>,
+}
 
-pub async fn run_server() -> anyhow::Result<()> {
-    let app_state = Arc::new(AppState {});
+pub async fn run_server(doc_service: Arc<DocumentService>) -> anyhow::Result<()> {
+    let app_state = Arc::new(AppState {
+        doc_service,
+    });
 
     let app = Router::new()
         .route("/", get(root_handler))
