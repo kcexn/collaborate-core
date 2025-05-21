@@ -13,21 +13,31 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 use anyhow::Result;
 
-mod scylla_connector;
-use scylla_connector::ScyllaManager;
+// Keep the module declaration if you plan to use it later
+// mod scylla_connector;
+// use scylla_connector::ScyllaManager;
+
+mod http_server; // Add the new http_server module
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    println!("Attempting to connect to ScyllaDB...");
-    let _manager = ScyllaManager::new(
-        &["127.0.0.1:9042"],
-        "collaborate_core"
-    ).await?;
-    let (version,) = _manager.session
-        .query_unpaged("SELECT release_version FROM system.local", &[])
-        .await?
-        .into_rows_result()?
-        .first_row::<(String,)>()?;
-    println!("ScyllaDB release_version: {}", version);
+    // Optional: Initialize tracing for better logs
+    // tracing_subscriber::fmt::init();
+
+    println!("Starting HTTP server...");
+    http_server::run_server().await?;
+
+    // ScyllaDB connection code (can be re-enabled later)
+    // println!("Attempting to connect to ScyllaDB...");
+    // let _manager = ScyllaManager::new(
+    //     &["127.0.0.1:9042"],
+    //     "collaborate_core"
+    // ).await?;
+    // let (version,) = _manager.session
+    //     .query_unpaged("SELECT release_version FROM system.local", &[])
+    //     .await?
+    //     .into_rows_result()?
+    //     .first_row::<(String,)>()?;
+    // println!("ScyllaDB release_version: {}", version);
     Ok(())
 }

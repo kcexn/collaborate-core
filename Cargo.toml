@@ -1,16 +1,31 @@
+#[package]
+#name = "collaborate-core"
+#version = "0.1.0"
+#edition = "2024"
+#
+#[dependencies]
+#scylla = "1.1.0" # Or the latest version
+#uuid = { version = "1.16", features = ["v4", "serde"] }
+#tokio = { version = "1.45", features = ["macros", "rt-multi-thread"] }
+#thiserror = "2.0.12"
+#chrono = { version = "0.4", features = ["serde"] }
+#anyhow = "1.0"
+#tracing = "0.1" # Optional, for logging
 [package]
 name = "collaborate-core"
 version = "0.1.0"
 edition = "2024"
 
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
 [dependencies]
-scylla = "1.1.0" # Or the latest version
-uuid = { version = "1.16", features = ["v4", "serde"] }
-tokio = { version = "1.45", features = ["macros", "rt-multi-thread"] }
-thiserror = "2.0.12"
-chrono = { version = "0.4", features = ["serde"] }
+tokio = { version = "1.45", features = ["full"] }
 anyhow = "1.0"
-tracing = "0.1" # Optional, for logging
+scylla = "1.1"
+axum = { version = "0.7.x", features = ["ws"] } # Added Axum with WebSocket feature
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] } # For WebSocket stream handling
+tracing = "0.1" # Optional: for better logging
+tracing-subscriber = { version = "0.3", features = ["env-filter"] } # Optional: for better logging
 
 [[bin]]
 name = "main"
