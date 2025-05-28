@@ -8,15 +8,10 @@ edition = "2024"
 [dependencies]
 anyhow = "1.x"
 tokio = { version = "1.45", features = ["full"] }
-axum = { version = "0.7.x", features = ["ws"] } # Added Axum with WebSocket feature
-scylla = { version = "1.x" } # Removed chrono feature, as it's likely included or handled differently in 1.1.0
-uuid = { version = "1.7", features = ["v4", "serde"] } # For unique document IDs
-chrono = { version = "0.4", features = ["serde"] } # For timestamps
-serde = { version = "1.0", features = ["derive"] } # For serialization, if needed
-thiserror = "1.0" # For custom error types
-futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] } # For WebSocket stream handling
-tracing = "0.1" # Optional: for better logging
-tracing-subscriber = { version = "0.3", features = ["env-filter"] } # Optional: for better logging
+sqlx = { version = "0.8.x", features = ["runtime-tokio-rustls", "postgres", "macros", "uuid", "chrono"] }
+axum = { version = "0.7.x", features = ["ws"] }
+uuid = { version = "1.x", features = ["v4"] }
+chrono = { version = "0.x" }
 
 [[bin]]
 name = "main"

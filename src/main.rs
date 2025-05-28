@@ -8,44 +8,34 @@
 // This program is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU General Public License for more details.
+// GNU General Public License for more details.s
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
-use std::sync::Arc;
+mod db;
+mod document_service;
+mod http_server;
+
 use anyhow::Result;
-
-// Keep the module declaration if you plan to use it later
-mod scylla_connector;
-use scylla_connector::ScyllaManager;
-
-mod http_server; // Add the new http_server module
-mod document_service; // Add the new document_service module
+use std::sync::Arc;
+use db::Manager;
 use document_service::DocumentService;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Optional: Initialize tracing for better logs
-    // tracing_subscriber::fmt::init();
-
-    println!("Attempting to connect to ScyllaDB...");
-    let scylla_manager = Arc::new(ScyllaManager::new(
-        &["127.0.0.1:9042"],
-        "collaborate_core" // Ensure this keyspace exists or is created by your Scylla setup
+    println!("Attempting to connect to database...");
+    let manager = Arc::new(Manager::new(
+        &"root@localhost:26257",
+        "collaborate_app"
     ).await?);
 
-    let (version,) = scylla_manager.session
-        .query_unpaged("SELECT release_version FROM system.local", &[])
-        .await?
-        .into_rows_result()?
-        .first_row::<(String,)>()?;
-    println!("ScyllaDB release_version: {}", version);    
+    manager.check_connection().await?;
 
     println!("Initializing DocumentService...");
-    let document_service = Arc::new(DocumentService::new(scylla_manager.clone()).await?);
+    let doc_service = Arc::new(DocumentService::new(manager.clone()).await?);
     println!("DocumentService initialized.");
 
     println!("Starting HTTP server...");
-    http_server::run_server(document_service).await?; // Pass DocumentService to the HTTP server
+    http_server::run_server(doc_service).await?; // Pass DocumentService to the HTTP server
 
     Ok(())
 }

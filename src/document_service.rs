@@ -12,69 +12,80 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::scylla_connector::ScyllaManager;
+use crate::db::Manager; // Assuming db::Manager is your CockroachDB manager
 use anyhow::{Context, Result}; // Use anyhow::Result for convenience
-use chrono::Utc; // Needed for Utc::now()
-use scylla::DeserializeRow;
-use scylla::value::CqlTimestamp; // Updated to use CqlTimestamp
+use chrono::{DateTime, Utc}; // Needed for Utc::now() and DateTime<Utc>
+use sqlx::{Row, FromRow, Executor}; // For deriving FromRow for sqlx
 use std::sync::Arc;
 use uuid::Uuid;
 
-#[derive(Clone, Debug, DeserializeRow, PartialEq)] // Updated: FromRow -> DeserializeRow
+// Helper trait and implementation for truncating DateTime<Utc> to milliseconds
+trait TruncateToMillis {
+    fn trunc_to_millis(self) -> Self;
+}
+
+impl TruncateToMillis for DateTime<Utc> {
+    fn trunc_to_millis(self) -> Self {
+        // Convert to millis since epoch and back to DateTime<Utc> to truncate sub-millisecond precision.
+        DateTime::from_timestamp_millis(self.timestamp_millis())
+            .expect("Failed to truncate DateTime<Utc> to milliseconds; timestamp out of range for valid input")
+    }
+}
+
+#[derive(Clone, Debug, FromRow, PartialEq)] // Changed to sqlx::FromRow
 pub struct DocumentMetadata {
     pub id: Uuid,
     pub name: String,
-    pub created_at: CqlTimestamp,
-    pub updated_at: CqlTimestamp,
+    pub created_at: DateTime<Utc>, // Changed to DateTime<Utc>
+    pub updated_at: DateTime<Utc>, // Changed to DateTime<Utc>
 }
 
-#[derive(Clone, Debug, DeserializeRow, PartialEq)] // Updated: FromRow -> DeserializeRow
+#[derive(Clone, Debug, FromRow, PartialEq)] // Changed to sqlx::FromRow
 pub struct DocumentContent {
     pub document_id: Uuid,
     pub crdt_data: Vec<u8>, // Opaque CRDT data blob
-    pub updated_at: CqlTimestamp, // Changed to CqlTimestamp
+    pub updated_at: DateTime<Utc>, // Changed to DateTime<Utc>
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Document {
     pub metadata: DocumentMetadata,
-    pub content: Option<DocumentContent>, // Content might not exist or might be fetched separately
+    pub content: Option<DocumentContent>,
 }
 
 #[derive(Clone)]
 pub struct DocumentService {
-    scylla_manager: Arc<ScyllaManager>,
+    db_manager: Arc<Manager>,
 }
 
 impl DocumentService {
-    pub async fn new(scylla_manager: Arc<ScyllaManager>) -> Result<Self> { // Return anyhow::Result
-        let service = DocumentService { scylla_manager };
+    pub async fn new(db_manager: Arc<Manager>) -> Result<Self> {
+        let service = DocumentService { db_manager };
         service.initialize_schema().await?;
         Ok(service)
     }
 
-    async fn initialize_schema(&self) -> Result<()> { // Return anyhow::Result
-        self.scylla_manager.session
-            .query_unpaged( // Changed to query_unpaged
+    async fn initialize_schema(&self) -> Result<()> {
+        self.db_manager.pool
+            .execute(
                 "CREATE TABLE IF NOT EXISTS documents_metadata (
                     id UUID PRIMARY KEY,
                     name TEXT,
-                    created_at TIMESTAMP,
-                    updated_at TIMESTAMP
+                    created_at TIMESTAMPTZ NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL
                 )",
-                &[],
             )
             .await
             .context("Failed to create documents_metadata table")?;
 
-        self.scylla_manager.session
-            .query_unpaged( // Changed to query_unpaged
+        self.db_manager.pool
+            .execute(
                 "CREATE TABLE IF NOT EXISTS documents_content (
                     document_id UUID PRIMARY KEY,
-                    crdt_data BLOB,
-                    updated_at TIMESTAMP
+                    crdt_data BYTEA,
+                    updated_at TIMESTAMPTZ NOT NULL,
+                    FOREIGN KEY (document_id) REFERENCES documents_metadata(id) ON DELETE CASCADE
                 )",
-                &[],
             )
             .await
             .context("Failed to create documents_content table")?;
@@ -82,23 +93,25 @@ impl DocumentService {
         Ok(())
     }
 
-    pub async fn create_document(&self, name: &str) -> Result<DocumentMetadata> { // Return anyhow::Result
+    pub async fn create_document(&self, name: &str) -> Result<DocumentMetadata> {
         let id = Uuid::new_v4();
-        let current_cql_timestamp = CqlTimestamp(Utc::now().timestamp_millis());
+        let now = Utc::now().trunc_to_millis();
         let metadata = DocumentMetadata {
             id,
             name: name.to_string(),
-            created_at: current_cql_timestamp,
-            updated_at: current_cql_timestamp,
+            created_at: now,
+            updated_at: now,
         };
 
-        self.scylla_manager.session
-            .query_unpaged( // Changed to query_unpaged
-                "INSERT INTO documents_metadata (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)",
-                // Directly use the CqlTimestamp fields from the metadata struct
-                (&metadata.id, &metadata.name, metadata.created_at, metadata.updated_at),
-            )
-            .await
+        self.db_manager.pool
+            .execute(sqlx::query(
+                    "INSERT INTO documents_metadata (id, name, created_at, updated_at) VALUES ($1, $2, $3, $4)"
+                )
+                .bind(metadata.id)
+                .bind(&metadata.name)
+                .bind(metadata.created_at)
+                .bind(metadata.updated_at)
+            ).await
             .context(format!("Failed to insert document metadata for ID {}", id))?;
         
         // Optionally, create an initial empty content entry
@@ -109,39 +122,57 @@ impl DocumentService {
     }
 
     pub async fn get_document_metadata(&self, doc_id: Uuid) -> Result<Option<DocumentMetadata>> {
-        let query_result = self.scylla_manager.session
-                .query_unpaged("SELECT id, name, created_at, updated_at FROM documents_metadata WHERE id = ?", (doc_id,))
-                .await
-                .context(format!("Failed to query document metadata for ID {}", doc_id))?;
-        let result_rows = query_result.into_rows_result()?;
+        let row_opt = sqlx::query(
+                "SELECT id, name, created_at, updated_at FROM documents_metadata WHERE id = $1"
+            )
+            .bind(doc_id)
+            .fetch_optional(&*self.db_manager.pool)
+            .await
+            .context(format!("Failed to query document metadata for ID {}", doc_id))?;
 
-        // Iterate over the rows. Since we expect at most one row for a given ID,
-        // this loop will execute at most once.
-        for row_result in result_rows.rows::<DocumentMetadata>()? {
-            // If a row is found, deserialize it and return.
-            return Ok(Some(row_result?));
+        match row_opt {
+            Some(row) => {
+            // Manually map the row to DocumentMetadata
+            // try_get can be used for fallible conversions, or get for infallible ones if types are exact.
+                let metadata = DocumentMetadata {
+                    id: row.try_get("id").context("Failed to get 'id' from row")?, // UUIDs don't need truncation
+                    name: row.try_get("name").context("Failed to get 'name' from row")?, // String doesn't need truncation
+                    created_at: row.try_get::<DateTime<Utc>, _>("created_at").context("Failed to get 'created_at' from row")?.trunc_to_millis(),
+                    updated_at: row.try_get::<DateTime<Utc>, _>("updated_at").context("Failed to get 'updated_at' from row")?.trunc_to_millis(),
+                };
+                Ok(Some(metadata))
+            },
+            None => Ok(None),
         }
-        // If the loop completes without returning, no row was found.
-        Ok(None)
     }
 
-    pub async fn update_document_content(&self, doc_id: Uuid, content_data: Vec<u8>) -> Result<()> { // Return anyhow::Result
-        let current_cql_timestamp = CqlTimestamp(Utc::now().timestamp_millis());
+
+    pub async fn update_document_content(&self, doc_id: Uuid, content_data: Vec<u8>) -> Result<()> {
+        let now = Utc::now().trunc_to_millis(); // Truncate to millisecond precision
 
         // Upsert content
-        self.scylla_manager.session
-            .query_unpaged(
-                "INSERT INTO documents_content (document_id, crdt_data, updated_at) VALUES (?, ?, ?)",
-                (doc_id, content_data, current_cql_timestamp),
+        self.db_manager.pool
+            .execute(sqlx::query(
+                "INSERT INTO documents_content (document_id, crdt_data, updated_at)
+                 VALUES ($1, $2, $3)
+                 ON CONFLICT (document_id) DO UPDATE
+                 SET crdt_data = EXCLUDED.crdt_data,
+                     updated_at = EXCLUDED.updated_at"
+                )
+                .bind(doc_id)
+                .bind(content_data) // Vec<u8> for BYTEA
+                .bind(now)
             )
             .await
             .context(format!("Failed to update document content for ID {}", doc_id))?;
 
         // Update metadata's updated_at timestamp
-        self.scylla_manager.session
-            .query_unpaged(
-                "UPDATE documents_metadata SET updated_at = ? WHERE id = ?",
-                (current_cql_timestamp, doc_id),
+        self.db_manager.pool
+            .execute(sqlx::query(
+                "UPDATE documents_metadata SET updated_at = $1 WHERE id = $2"
+                )
+                .bind(now)
+                .bind(doc_id)
             )
             .await
             .context(format!("Failed to update metadata timestamp for ID {}", doc_id))?;
@@ -150,24 +181,28 @@ impl DocumentService {
         Ok(())
     }
 
-    pub async fn get_document_content(&self, doc_id: Uuid) -> Result<Option<DocumentContent>> { // Return anyhow::Result
-        let query_result = self.scylla_manager.session
-            .query_unpaged("SELECT document_id, crdt_data, updated_at FROM documents_content WHERE document_id = ?", (doc_id,))
+    pub async fn get_document_content(&self, doc_id: Uuid) -> Result<Option<DocumentContent>> {
+        let row_opt = sqlx::query(
+                "SELECT document_id, crdt_data, updated_at FROM documents_content WHERE document_id = $1"
+            )
+            .bind(doc_id)
+            .fetch_optional(&*self.db_manager.pool)
             .await
             .context(format!("Failed to query document content for ID {}", doc_id))?;
-        let result_rows = query_result.into_rows_result()?;
-
-        // Iterate over the rows. Since we expect at most one row for a given ID,
-        // this loop will execute at most once.
-        for row_result in result_rows.rows::<DocumentContent>()? {
-            // If a row is found, deserialize it and return.
-            return Ok(Some(row_result?));
+        match row_opt {
+            Some(row) => {
+                let content = DocumentContent {
+                    document_id: row.try_get("document_id").context("Failed to get 'document_id' from row")?, // UUID
+                    crdt_data: row.try_get("crdt_data").context("Failed to get 'crdt_data' from row")?,       // Vec<u8>
+                    updated_at: row.try_get::<DateTime<Utc>, _>("updated_at").context("Failed to get 'updated_at' from row")?.trunc_to_millis(),
+                };
+                Ok(Some(content))
+            },
+            None => Ok(None),
         }
-        // If the loop completes without returning, no row was found.
-        Ok(None)
     }
 
-    pub async fn get_document(&self, doc_id: Uuid) -> Result<Option<Document>> { // Return anyhow::Result
+    pub async fn get_document(&self, doc_id: Uuid) -> Result<Option<Document>> {
         let metadata_opt = self.get_document_metadata(doc_id).await?;
         match metadata_opt {
             Some(metadata) => {
@@ -182,54 +217,33 @@ impl DocumentService {
     }
 }
 
-// Basic tests can be added here later on, potentially using a test keyspace
-// or mocking ScyllaManager.
-
 #[cfg(test)]
 mod tests {
-    use super::*; // Import items from parent module (DocumentService, DocumentMetadata, etc.)
-    use crate::scylla_connector::ScyllaManager; // For ScyllaManager::new
+    use super::*;
+    use crate::db::Manager as DbManager;
     use anyhow::{Context, Result};
-    use scylla::client::session_builder::SessionBuilder; // For initial session to create keyspace
     use std::sync::Arc;
-    // Uuid is already imported in the parent module and brought into scope by `use super::*;`
 
-    const TEST_KEYSPACE_NAME: &str = "collaborate_core_test";
-    const SCYLLA_URIS: &[&str] = &["127.0.0.1:9042"]; // Ensure this matches your test ScyllaDB
+    // Configure these constants for your CockroachDB test environment
+    const TEST_DB_NAME: &str = "collaborate_core_doc_service_test";
+    const COCKROACH_BASE_URI: &str = "root@localhost:26257";
 
-    // Helper to get a ScyllaManager configured for the test keyspace.
-    // This function will also ensure the test keyspace exists.
-    async fn get_test_scylla_manager() -> Result<Arc<ScyllaManager>> {
-        // 1. Create a temporary session to ensure the keyspace exists
-        let temp_session = SessionBuilder::new()
-            .known_nodes(SCYLLA_URIS)
-            .build()
+    // Helper to get a db::Manager configured for the test database.
+    // This function will also ensure the test database exists via db::Manager::new.
+    async fn get_test_db_manager() -> Result<Arc<DbManager>> {
+        let manager = DbManager::new(COCKROACH_BASE_URI, TEST_DB_NAME)
             .await
-            .context("Failed to connect to ScyllaDB for test keyspace creation")?;
-
-        temp_session
-            .query_unpaged(
-                format!(
-                    "CREATE KEYSPACE IF NOT EXISTS {} WITH replication = {{'class': 'SimpleStrategy', 'replication_factor': '1'}}",
-                    TEST_KEYSPACE_NAME
-                ),
-                &[],
-            )
-            .await
-            .context(format!("Failed to create test keyspace: {}", TEST_KEYSPACE_NAME))?;
-        
-        println!("Test keyspace '{}' ensured or created.", TEST_KEYSPACE_NAME);
-
-        // 2. Create the ScyllaManager which will connect and use the test keyspace
-        let scylla_manager = ScyllaManager::new(SCYLLA_URIS, TEST_KEYSPACE_NAME).await?;
-        Ok(Arc::new(scylla_manager))
+            .context(format!("Failed to initialize DbManager for test database '{}'", TEST_DB_NAME))?;
+        println!("Test database '{}' ensured or created via DbManager.", TEST_DB_NAME);
+        Ok(Arc::new(manager))
     }
 
     // Helper to get a DocumentService instance initialized for tests.
     async fn get_test_document_service() -> Result<DocumentService> {
-        let scylla_manager = get_test_scylla_manager().await?;
-        // DocumentService::new will call initialize_schema, creating tables in the test keyspace
-        DocumentService::new(scylla_manager).await
+        let db_manager = get_test_db_manager().await?;
+        // DocumentService::new will call initialize_schema, creating tables in the test database
+        DocumentService::new(db_manager).await
+            .context("Failed to create DocumentService for tests")
     }
 
     #[tokio::test]
@@ -281,8 +295,8 @@ mod tests {
         assert_eq!(fetched_content.crdt_data, new_content_data);
         
         let updated_metadata = doc_service.get_document_metadata(doc_id).await?.unwrap();
-        assert!(updated_metadata.updated_at.0 >= original_updated_at.0, "Metadata updated_at should be same or newer.");
-        assert!(fetched_content.updated_at.0 >= original_updated_at.0, "Content updated_at should be same or newer.");
+        assert!(updated_metadata.updated_at >= original_updated_at, "Metadata updated_at should be same or newer.");
+        assert!(fetched_content.updated_at >= original_updated_at, "Content updated_at should be same or newer.");
 
         Ok(())
     }

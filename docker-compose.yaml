@@ -1,26 +1,20 @@
 services:
-  scylladb:
-    image: scylladb/scylla:latest
-    container_name: scylla-dev # As per your original request
+  cockroachdb:
+    image: cockroachdb/cockroach:latest
+    container_name: cockroach-dev
     ports:
-      - "9042:9042" # Maps port 9042 on your host to port 9042 in the container
-    command: "--smp 1 --memory 1G --developer-mode 1"
-    healthcheck:
-      test: ["CMD", "cqlsh", "-e", "describe keyspaces"]
-      interval: 10s   # How often to run the check
-      timeout: 10s    # How long to wait for the check to return
-      retries: 10     # How many times to retry before marking as unhealthy
-      start_period: 30s # Grace period for startup before failures count
-
-  scylla-init:
-    image: scylladb/scylla:latest # Use the same ScyllaDB image as it contains cqlsh
-    container_name: scylla-init # Friendly name for the init container
-    depends_on:
-      scylladb:
-        condition: service_healthy # Crucial: waits for scylladb to be healthy
+      - "26257:26257" # CockroachDB SQL port
+      - "8080:8080"   # CockroachDB Admin UI port
+    command: "start-single-node --insecure --advertise-addr=localhost"
     volumes:
-      - ./init-db.cql:/init-db.cql # Mount the CQL script into the container
-    entrypoint: /bin/sh
-    command: -c "
-          cqlsh scylladb -f /init-db.cql
-      "
+      - cockroach_data:/cockroach/cockroach-data
+    healthcheck:
+      # Checks if the node is ready to accept connections via the HTTP health endpoint
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health?ready=1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s # Grace period for CockroachDB to start
+
+volumes:
+  cockroach_data:
